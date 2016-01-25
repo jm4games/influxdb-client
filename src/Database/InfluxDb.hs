@@ -16,7 +16,7 @@ module Database.InfluxDb
    , ToSeriesPoint(..)
    , newClient
    , newClientWithSettings
-   , pointConsumer'
+   , pointConsumer
    ) where
 
 import Control.Exception (Exception)
@@ -112,13 +112,13 @@ newClientWithSettings settings url = do
 --            else loop 0 vec
 --            where ndx' = ndx + 1
 
-pointConsumer' :: (MonadResource m, ToPoint p)
+pointConsumer :: (MonadResource m, ToPoint p)
                => InfluxDbClient -- ^ The client to use for interacting with influxdb.
                -> Text -- ^ The database name.
                -> Int64 -- ^ The max number of bytes to send per request. 
                -> Series -- ^ The series to write points for.
                -> Consumer p m ()
-pointConsumer' client dbName size series = loop mempty 0
+pointConsumer client dbName size series = loop mempty 0
     where 
       (!prefCnt, !lnPrefix) =
           (fromIntegral $ BS.length pref + 1, B.insertByteString $ pref `BS.append` " ")
