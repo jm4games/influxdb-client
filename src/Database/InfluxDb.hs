@@ -1,37 +1,34 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 module Database.InfluxDb
-   ( Duration(..)
-   , FieldKey
-   , FieldSet
-   , FieldValue
+   ( module Database.InfluxDb.Types
    , InfluxDbClient
-   , Point(..)
-   , RetentionPolicy(..)
-   , Series(..)
-   , ToPoint(..)
-   , ToSeriesPoint(..)
    , newClient
    , newClientWithSettings
    , pointConsumer
+   , rawQuery
+   , rawQuery'
    ) where
 
 import Control.Exception (Exception)
 import Control.Monad (when)
 import Control.Monad.Catch (throwM)
-import Control.Monad.Trans.Resource (MonadResource)
+import Control.Monad.Trans.Resource (MonadResource, runResourceT)
 
-import Data.Conduit (Consumer, await)
+import Data.Aeson (Value)
+import Data.Aeson.Parser(value, value')
+import Data.Attoparsec.ByteString (Parser)
+import Data.Conduit (($$+-), Consumer, await)
+import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Data.Typeable (Typeable)
-import Data.Vector (Vector)
-import Data.Word (Word64)
+
+import Database.InfluxDb.Types
 
 import qualified Blaze.ByteString.Builder as B
 
@@ -45,37 +42,6 @@ import qualified Network.HTTP.Types.Status as N
 import qualified Network.HTTP.Types.Method as N
 
 import qualified Text.Show.ByteString as TB
-
-data RetentionPolicy = RetentionPolicy
-    { rpName :: !Text
-    , rpDuration :: !Duration 
-    , rpReplication :: !(Maybe Int)
-    }
-
-data Duration = Hours !Int | Days !Int | Weeks !Int | INF
-
-data Series = Series
-    { sMeasurement :: !Text
-    , sTagSet :: !(M.Map Text Text)
-    }
-
-type FieldKey = Text
-type FieldValue = Text
-type FieldSet = Vector (FieldKey, FieldValue)
-
-data Point = Point
-    { pTimestamp :: !(Maybe Word64)
-    , pFields :: !FieldSet
-    }
-
-instance ToPoint Point where
-    toPoint = id
-
-class ToPoint a where
-    toPoint :: a -> Point
-
-class ToSeriesPoint a where
-    toSeriesPoint :: a -> (Series, Point)
 
 data InfluxDbException = IngestionError String deriving (Typeable, Show)
 
@@ -97,20 +63,6 @@ newClientWithSettings settings url = do
         { icManager = mng 
         , icDefaultRequest = req
         }
-
---pointCollector :: MonadResource m => Int -> Conduit Point m (V.Vector Point)
---pointCollector !size = initLoop 
---    where
---        initLoop = liftIO (VM.unsafeNew size) >>= loop 0
---        loop ndx vec = await >>= maybe cleanup (writeVal ndx vec)
---            where cleanup = when (ndx > 0) $ 
---                     (liftIO . V.unsafeFreeze $ VM.unsafeTake ndx vec) >>= yield
---        writeVal !ndx vec p = do 
---            liftIO $ VM.unsafeWrite vec ndx p
---            if ndx' == size then
---                liftIO (V.unsafeFreeze vec) >>= yield >> initLoop
---            else loop 0 vec
---            where ndx' = ndx + 1
 
 pointConsumer :: (MonadResource m, ToPoint p)
                => InfluxDbClient -- ^ The client to use for interacting with influxdb.
@@ -148,6 +100,27 @@ pointConsumer client dbName size series = loop mempty 0
             req' = (icDefaultRequest client) 
                     { N.method  = N.methodPost
                     , N.requestBody = N.RequestBodyBuilder byteCnt body
-                    , N.path = "write"
+                    , N.path = "/write"
                     , N.queryString = dbQueryString
                     }
+
+rawQuery :: InfluxDbClient -> Text -> Text -> IO Value
+rawQuery = rawQueryInternal value 
+
+rawQuery' :: InfluxDbClient -> Text -> Text -> IO Value
+rawQuery' = rawQueryInternal value' 
+
+rawQueryInternal :: Parser Value -> InfluxDbClient -> Text -> Text -> IO Value
+rawQueryInternal parser client db qry = runResourceT $ do
+    res <- N.http req (icManager client)
+    N.responseBody res $$+- sinkParser parser 
+    where
+      !dbString = "db=" `BS.append` encodeUtf8 db
+      req = (icDefaultRequest client)
+                { N.method = N.methodGet
+                , N.path = "/query"
+                , N.queryString = BS.concat [dbString, "&q=", encodeUtf8 qry]
+                }
+
+toQueryResult :: Value -> QueryResult
+toQueryResult value = undefined
