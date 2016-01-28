@@ -17,7 +17,7 @@ import Control.Monad (when)
 import Control.Monad.Catch (throwM)
 import Control.Monad.Trans.Resource (MonadResource, runResourceT)
 
-import Data.Aeson (Value)
+import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
 import Data.Attoparsec.ByteString (Parser)
 import Data.Conduit (($$+-), Consumer, await)
@@ -79,6 +79,8 @@ pointConsumer client dbName size series = loop mempty 0
                 | otherwise = BS.intercalate "," (encodeUtf8 (sMeasurement series) : tags)
                     where tags = map kvLBS $ M.toList (sTagSet series) 
       kvLBS (k, v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
+      kvLBS' (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
+      kvLBS' (_, Nothing) = ""
       loop body !byteCnt = await >>= maybe 
                                     (when (byteCnt > 0) $ sendReq body byteCnt) 
                                     (bodyApp body byteCnt . toPoint)
@@ -86,7 +88,7 @@ pointConsumer client dbName size series = loop mempty 0
         | byteCnt' > size = sendReq body byteCnt >> loop pointBld cnt 
         | otherwise = loop (body <> pointBld) byteCnt' 
         where 
-          dataLbs = (LBS.intercalate "," . map (LBS.fromStrict . kvLBS) . V.toList $ pFields p) <>
+          dataLbs = (LBS.intercalate "," . map (LBS.fromStrict . kvLBS') . V.toList $ pFields p) <>
                     maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
           pointBld = lnPrefix <> B.insertLazyByteString dataLbs
           !cnt = prefCnt + LBS.length dataLbs
@@ -104,16 +106,16 @@ pointConsumer client dbName size series = loop mempty 0
                     , N.queryString = dbQueryString
                     }
 
-rawQuery :: InfluxDbClient -> Text -> Text -> IO Value
+rawQuery :: InfluxDbClient -> Text -> Text -> IO QueryResult
 rawQuery = rawQueryInternal value 
 
-rawQuery' :: InfluxDbClient -> Text -> Text -> IO Value
+rawQuery' :: InfluxDbClient -> Text -> Text -> IO QueryResult
 rawQuery' = rawQueryInternal value' 
 
-rawQueryInternal :: Parser Value -> InfluxDbClient -> Text -> Text -> IO Value
+rawQueryInternal :: Parser Value -> InfluxDbClient -> Text -> Text -> IO QueryResult
 rawQueryInternal parser client db qry = runResourceT $ do
     res <- N.http req (icManager client)
-    N.responseBody res $$+- sinkParser parser 
+    parseJSON <$> N.responseBody res $$+- sinkParser parser 
     where
       !dbString = "db=" `BS.append` encodeUtf8 db
       req = (icDefaultRequest client)
@@ -121,6 +123,3 @@ rawQueryInternal parser client db qry = runResourceT $ do
                 , N.path = "/query"
                 , N.queryString = BS.concat [dbString, "&q=", encodeUtf8 qry]
                 }
-
-toQueryResult :: Value -> QueryResult
-toQueryResult value = undefined

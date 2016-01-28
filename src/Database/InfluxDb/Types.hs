@@ -24,7 +24,7 @@ data Series = Series
     }
 
 type FieldKey = Text
-type FieldValue = Text
+type FieldValue = Maybe Text
 type FieldSet = V.Vector (FieldKey, FieldValue)
 
 data Point = Point
@@ -42,28 +42,55 @@ class ToSeriesPoint a where
     toSeriesPoint :: a -> (Series, Point)
 
 data QueryResult =  QueryError !Text
-                  | QueryResults [SeriesResult]
+                  | QueryResult (V.Vector SeriesResult)
 
-data SeriesResult = SeriesResult Text [Point]
+data SeriesResult = SeriesResult Text (V.Vector Point)
 
 instance A.FromJSON QueryResult where
-    parseJSON (A.Object o) = do
-       res <- o A..:? "results"
-       case res of
-           Just (A.Array a) ->
-              case a V.! 0 of
-                 (A.Object os) -> os A..: "series" >>= \s ->
-                   case s of
-                       Just (A.Array sa) -> undefined
-                       _ -> error "Unexpected series, array not found."
-                 _ -> error "Unexpected series result."
-           Just x -> error $ "Unexpected element: " ++ show x
-           Nothing -> do
-               rErr <- o A..:? "error"
-               case rErr of
-                  Just (A.String err) -> return $ QueryError err 
-                  Nothing -> error "Unexpected result."
-       -- where
-        --    parseRoot =  
+    parseJSON (A.Object o) =
+       o A..:? "results" >>= \res ->
+           case res of
+               Just (A.Array a) -> QueryResult <$>
+                   V.mapM (\x -> readArray (valAsObj x) "series" >>= readSeries) a
+               Just x -> error $ "Unexpected element: " ++ show x
+               Nothing -> do
+                   rErr <- o A..:? "error"
+                   case rErr of
+                      Just (A.String err) -> return $ QueryError err 
+                      _ -> error "Unexpected result."
+        where
+            readSeries series = do
+                let series1 = valAsObj $ series V.! 0
+                name <- readText series1 "name" 
+                cols <- V.map valAsText <$> readArray series1 "columns" 
+                let tIndex = V.findIndex ((==) "time" . valAsText)
+                points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"  
+                return $ SeriesResult name points
+
+            valAsObj (A.Object x) = x 
+            valAsObj _ =  error "Unexpected json value (expected obj)."
+
+            valAsText (A.String s) = s 
+            valAsText _ =  error "Unexpected json value (expected text)."
+
+            readArray obj name = obj A..: name >>= \x ->
+                case x of
+                    A.Array a -> return a 
+                    _ -> error $ show name ++ " is not a array property."
+
+            readText obj name = obj A..: name >>= \x ->
+                case x of
+                    A.String s -> return s 
+                    _ -> error $ show name ++ " is not a text property."
+
+            readPoint _ cols (A.Array a) = Point
+                { pTimestamp = Nothing
+                , pFields = V.zipWith (\c b -> (c , maybeText b)) cols a 
+                }
+            readPoint _ _ _ = error "Unexpected json type in value array."
+
+            maybeText (A.String s) = Just s
+            maybeText A.Null = Nothing
+            maybeText _ = error "Unexpected json value."
 
     parseJSON _ = mzero
