@@ -2,8 +2,12 @@ module Database.InfluxDb.Types where
 
 import Control.Monad (mzero)
 
+import Data.Int (Int64)
+import Data.Scientific (Scientific, floatingOrInteger)
 import Data.Text (Text)
 import Data.Word (Word64)
+
+import TextShow (showt)
 
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
@@ -31,6 +35,7 @@ data Point = Point
     { pTimestamp :: !(Maybe Word64)
     , pFields :: !FieldSet
     }
+    deriving (Show)
 
 instance ToPoint Point where
     toPoint = id
@@ -43,8 +48,9 @@ class ToSeriesPoint a where
 
 data QueryResult =  QueryError !Text
                   | QueryResult (V.Vector SeriesResult)
+                  deriving (Show)
 
-data SeriesResult = SeriesResult Text (V.Vector Point)
+data SeriesResult = SeriesResult Text (V.Vector Point) deriving (Show)
 
 instance A.FromJSON QueryResult where
     parseJSON (A.Object o) =
@@ -85,12 +91,17 @@ instance A.FromJSON QueryResult where
 
             readPoint _ cols (A.Array a) = Point
                 { pTimestamp = Nothing
-                , pFields = V.zipWith (\c b -> (c , maybeText b)) cols a 
+                , pFields = V.zipWith (\c b -> (c , valAsMaybeText b)) cols a 
                 }
             readPoint _ _ _ = error "Unexpected json type in value array."
 
-            maybeText (A.String s) = Just s
-            maybeText A.Null = Nothing
-            maybeText _ = error "Unexpected json value."
+            valAsMaybeText val = 
+                case val of
+                    (A.String s) -> Just s
+                    (A.Number n) -> Just . either showt showt $ 
+                        (floatingOrInteger :: Scientific -> Either Double Int64) n
+                    (A.Bool b) -> Just $ showt b
+                    A.Null -> Nothing
+                    _ -> error "Unexpected json value"
 
     parseJSON _ = mzero

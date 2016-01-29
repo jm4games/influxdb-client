@@ -15,10 +15,11 @@ module Database.InfluxDb
 import Control.Exception (Exception)
 import Control.Monad (when)
 import Control.Monad.Catch (throwM)
-import Control.Monad.Trans.Resource (MonadResource, runResourceT)
+import Control.Monad.Trans.Resource (MonadResource)
 
 import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
+import Data.Aeson.Types(Result(..), parse)
 import Data.Attoparsec.ByteString (Parser)
 import Data.Conduit (($$+-), Consumer, await)
 import Data.Conduit.Attoparsec (sinkParser)
@@ -43,7 +44,9 @@ import qualified Network.HTTP.Types.Method as N
 
 import qualified Text.Show.ByteString as TB
 
-data InfluxDbException = IngestionError String deriving (Typeable, Show)
+data InfluxDbException = IngestionError String
+                       | ParseError String
+                       deriving (Typeable, Show)
 
 instance Exception InfluxDbException
 
@@ -106,16 +109,24 @@ pointConsumer client dbName size series = loop mempty 0
                     , N.queryString = dbQueryString
                     }
 
-rawQuery :: InfluxDbClient -> Text -> Text -> IO QueryResult
+rawQuery :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery = rawQueryInternal value 
 
-rawQuery' :: InfluxDbClient -> Text -> Text -> IO QueryResult
+rawQuery' :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery' = rawQueryInternal value' 
 
-rawQueryInternal :: Parser Value -> InfluxDbClient -> Text -> Text -> IO QueryResult
-rawQueryInternal parser client db qry = runResourceT $ do
+rawQueryInternal :: MonadResource m 
+                 => Parser Value 
+                 -> InfluxDbClient 
+                 -> Text 
+                 -> Text 
+                 -> m QueryResult
+rawQueryInternal parser client db qry = do
     res <- N.http req (icManager client)
-    parseJSON <$> N.responseBody res $$+- sinkParser parser 
+    x <- N.responseBody res $$+- sinkParser parser 
+    case parse parseJSON x of
+        Success a -> return a
+        Error err -> throwM $ ParseError err
     where
       !dbString = "db=" `BS.append` encodeUtf8 db
       req = (icDefaultRequest client)
