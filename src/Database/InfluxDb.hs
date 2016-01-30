@@ -132,5 +132,5 @@ rawQueryInternal parser client db qry = do
       req = (icDefaultRequest client)
                 { N.method = N.methodGet
                 , N.path = "/query"
-                , N.queryString = BS.concat [dbString, "&q=", encodeUtf8 qry]
+                , N.queryString = BS.concat [dbString, "&epoch=ns&q=", encodeUtf8 qry]
                 }
