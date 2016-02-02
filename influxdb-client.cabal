@@ -21,6 +21,8 @@ library
 
   exposed-modules:     
     Database.InfluxDb
+    Database.InfluxDb.Query
+    Database.InfluxDb.Types
   -- other-modules:       
 
   build-depends:
