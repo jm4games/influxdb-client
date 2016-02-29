@@ -68,13 +68,15 @@ instance A.FromJSON QueryResult where
                       Just (A.String err) -> return $ QueryError err 
                       _ -> error "Unexpected result."
         where
-            readSeries series = do
-                let series1 = unwrapObj $ series V.! 0
-                name <- readText series1 "name" 
-                cols <- V.map unwrapText <$> readArray series1 "columns" 
-                let tIndex = V.findIndex ("time" ==) cols
-                points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"  
-                return $ SeriesResult name points
+            readSeries series
+              | series == V.empty = return $ SeriesResult mempty V.empty
+              | otherwise = do
+                  let series1 = unwrapObj $ series V.! 0
+                  name <- readText series1 "name" 
+                  cols <- V.map unwrapText <$> readArray series1 "columns" 
+                  let tIndex = V.findIndex ("time" ==) cols
+                  points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"  
+                  return $ SeriesResult name points
 
             unwrapObj (A.Object x) = x 
             unwrapObj _ =  error "Unexpected json value (expected obj)."
@@ -85,9 +87,10 @@ instance A.FromJSON QueryResult where
             unwrapNumber (A.Number n) = n 
             unwrapNumber _ =  error "Unexpected json value (expected text)."
 
-            readArray obj name = obj A..: name >>= \x ->
+            readArray obj name = obj A..:? name >>= \x ->
                 case x of
-                    A.Array a -> return a 
+                    Just (A.Array a) -> return a 
+                    Nothing -> return V.empty
                     _ -> error $ show name ++ " is not a array property."
 
             readText obj name = obj A..: name >>= \x ->

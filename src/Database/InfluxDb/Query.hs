@@ -87,9 +87,6 @@ a .||. b = Or a b
 infix 4 .=.
 a .=. b = Eq a (showt b)
 
-(.=.) ::  Text -> Text -> WhereClause
-a .=. b = Eq a (showt b)
-
 (.!=.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .!=.
 a .!=. b = Ne a (showt b)
