@@ -46,6 +46,8 @@ import Data.Text.Encoding (encodeUtf8)
 
 import TextShow (TextShow, showt)
 
+import qualified Data.Text as T
+
 data SelectStatement = Select
   { ssTarget :: !Target
   , ssFrom :: !From
@@ -85,27 +87,33 @@ a .||. b = Or a b
 
 (.=.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .=.
-a .=. b = Eq a (showt b)
+a .=. b = Eq a (showTxt b)
 
 (.!=.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .!=.
-a .!=. b = Ne a (showt b)
+a .!=. b = Ne a (showTxt b)
 
 (.>.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .>.
-a .>. b = Gt a (showt b)
+a .>. b = Gt a (showTxt b)
 
 (.<.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .<.
-a .<. b = Lt a (showt b)
+a .<. b = Lt a (showTxt b)
 
 (.=~.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .=~.
-a .=~. b = Match a (showt b)
+a .=~. b = Match a (showTxt b)
 
 (.!~.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .!~.
-a .!~. b = NotMatch a (showt b)
+a .!~. b = NotMatch a (showTxt b)
+
+showTxt :: TextShow a => a -> Text
+showTxt x
+  | "\"" `T.isPrefixOf` txt = T.take (T.length txt - 2) $ T.drop 1 txt
+  | otherwise = txt
+  where txt = showt x
 
 select :: Target -> From -> SelectStatement
 select t f = Select
@@ -114,14 +122,14 @@ select t f = Select
   , ssWhere = Nothing
   }
 
-allT :: Target
-allT = Field "*"
-
 from :: Text -> From
 from = FromShort
 
 from' :: Text -> Text -> Text -> From
 from' = FromFull
+
+allT :: Target
+allT = Field "*"
 
 fieldT :: Text -> Target
 fieldT = Field
@@ -148,10 +156,10 @@ where' ss@Select { ssWhere = Just x } w = ss { ssWhere = Just $ And x w }
 
 toByteString :: SelectStatement -> ByteString
 toByteString ss = toStrict . toLazyByteString $ selectBuilder
-  <> maybe mempty (mappend " WHERE " . whereBuilder) (ssWhere ss)
+  <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
   where
-    selectBuilder = "SELECT " <> targetBuilder (ssTarget ss) <>
-                    " FROM " <> fromBuilder (ssFrom ss) 
+    selectBuilder = "SELECT%20" <> targetBuilder (ssTarget ss) <>
+                    "%20FROM%20" <> fromBuilder (ssFrom ss) 
 
 textBuilder :: Text -> Builder
 textBuilder = byteString . encodeUtf8
@@ -163,7 +171,7 @@ targetBuilder (Max f) = "MAX(" <> textBuilder f <> ")"
 targetBuilder (Min f) = "MIN(" <> textBuilder f <> ")"
 targetBuilder (Mean f) = "MEAN(" <> textBuilder f <> ")"
 targetBuilder (Sum f) = "SUM(" <> textBuilder f <> ")"
-targetBuilder (Targets t) = foldl' (<>) mempty . intersperse "," $ map targetBuilder t
+targetBuilder (Targets t) = foldl' (<>) mempty . intersperse "%2C" $ map targetBuilder t
 
 fromBuilder :: From -> Builder
 fromBuilder (FromShort t) = textBuilder t
@@ -171,12 +179,12 @@ fromBuilder (FromFull db ret m) =
   textBuilder db <> byteString ".\"" <> textBuilder ret <> "\"." <> textBuilder m
 
 whereBuilder :: WhereClause -> Builder
-whereBuilder (Eq a b) =       textBuilder a <> " = '"  <> textBuilder b <> "'"
-whereBuilder (Gt a b) =       textBuilder a <> " > '"  <> textBuilder b <> "'"
-whereBuilder (Lt a b) =       textBuilder a <> " < '"  <> textBuilder b <> "'"
-whereBuilder (Ne a b) =       textBuilder a <> " != '" <> textBuilder b <> "'"
-whereBuilder (Match a b) =    textBuilder a <> " =~ '" <> textBuilder b <> "'"
-whereBuilder (NotMatch a b) = textBuilder a <> " !~ '" <> textBuilder b <> "'"
+whereBuilder (Eq a b) =       textBuilder a <> "%20%3D%20%27"  <> textBuilder b <> "%27"
+whereBuilder (Gt a b) =       textBuilder a <> "%20%3E%20%27"  <> textBuilder b <> "%27"
+whereBuilder (Lt a b) =       textBuilder a <> "%20%3C%20%27"  <> textBuilder b <> "%27"
+whereBuilder (Ne a b) =       textBuilder a <> "%20!%3D%20%27" <> textBuilder b <> "%27"
+whereBuilder (Match a b) =    textBuilder a <> "%20%3D~%20%27" <> textBuilder b <> "%27"
+whereBuilder (NotMatch a b) = textBuilder a <> "%20!~%20%27" <> textBuilder b <> "%27"
 whereBuilder (And a b) = "(" <> whereBuilder a <> ") AND (" <> whereBuilder b <> ")"
 whereBuilder (Or a b) =  "(" <> whereBuilder a <> ") OR (" <> whereBuilder b <> ")"
 

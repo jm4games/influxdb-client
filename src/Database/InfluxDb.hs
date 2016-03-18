@@ -8,6 +8,8 @@ module Database.InfluxDb
    , newClient
    , newClientWithSettings
    , pointConsumer
+   , query
+   , query'
    , rawQuery
    , rawQuery'
    ) where
@@ -30,6 +32,7 @@ import Data.Text.Encoding (encodeUtf8)
 import Data.Typeable (Typeable)
 
 import Database.InfluxDb.Types
+import Database.InfluxDb.Query (SelectStatement, toByteString)
 
 import qualified Blaze.ByteString.Builder as B
 
@@ -110,16 +113,22 @@ pointConsumer client dbName size series = loop mempty 0
                     }
 
 rawQuery :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
-rawQuery = rawQueryInternal value 
+rawQuery client db = rawQueryInternal value client db . encodeUtf8 
 
 rawQuery' :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
-rawQuery' = rawQueryInternal value' 
+rawQuery' client db = rawQueryInternal value' client db . encodeUtf8 
+
+query :: MonadResource m => InfluxDbClient -> Text -> SelectStatement -> m QueryResult
+query client db = rawQueryInternal value client db . toByteString 
+
+query' :: MonadResource m => InfluxDbClient -> Text -> SelectStatement -> m QueryResult
+query' client db = rawQueryInternal value' client db . toByteString 
 
 rawQueryInternal :: MonadResource m 
                  => Parser Value 
                  -> InfluxDbClient 
                  -> Text 
-                 -> Text 
+                 -> BS.ByteString 
                  -> m QueryResult
 rawQueryInternal parser client db qry = do
     res <- N.http req (icManager client)
@@ -132,5 +141,5 @@ rawQueryInternal parser client db qry = do
       req = (icDefaultRequest client)
                 { N.method = N.methodGet
                 , N.path = "/query"
-                , N.queryString = BS.concat [dbString, "&epoch=ns&q=", encodeUtf8 qry]
+                , N.queryString = BS.concat [dbString, "&epoch=ns&q=", qry]
                 }
