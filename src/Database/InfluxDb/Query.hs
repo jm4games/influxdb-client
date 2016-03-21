@@ -1,9 +1,12 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module Database.InfluxDb.Query
   ( 
   -- * Types  
     From
+  , MultiSelect
   , SelectStatement
   , Target
   , WhereClause
@@ -36,7 +39,7 @@ module Database.InfluxDb.Query
   , now
   ) where
 
-import Data.ByteString (ByteString)
+import Data.ByteString (ByteString, intercalate)
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.ByteString.Lazy (toStrict)
 import Data.List (foldl', intersperse)
@@ -56,6 +59,21 @@ data SelectStatement = Select
 
 instance Show SelectStatement where
   show = show . toByteString
+
+instance RenderQuery SelectStatement where
+  toByteString ss = toStrict . toLazyByteString $ selectBuilder
+    <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
+    where
+      selectBuilder = "SELECT%20" <> targetBuilder (ssTarget ss) <>
+                      "%20FROM%20" <> fromBuilder (ssFrom ss) 
+
+type MultiSelect = [SelectStatement]
+
+instance RenderQuery MultiSelect where
+  toByteString = intercalate "%3B" . map toByteString
+
+class RenderQuery q where
+  toByteString :: q -> ByteString
 
 data Target = Count  !Text
             | Field  !Text
@@ -153,13 +171,6 @@ where' :: SelectStatement -> WhereClause -> SelectStatement
 infix 1 `where'`
 where' ss@Select { ssWhere = Nothing } w = ss { ssWhere = Just w }
 where' ss@Select { ssWhere = Just x } w = ss { ssWhere = Just $ And x w }
-
-toByteString :: SelectStatement -> ByteString
-toByteString ss = toStrict . toLazyByteString $ selectBuilder
-  <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
-  where
-    selectBuilder = "SELECT%20" <> targetBuilder (ssTarget ss) <>
-                    "%20FROM%20" <> fromBuilder (ssFrom ss) 
 
 textBuilder :: Text -> Builder
 textBuilder = byteString . encodeUtf8
