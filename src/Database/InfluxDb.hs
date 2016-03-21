@@ -11,8 +11,7 @@ module Database.InfluxDb
    , query
    , query'
    , rawQuery
-   , rawQuery'
-   ) where
+   , rawQuery') where
 
 import Control.Exception (Exception)
 import Control.Monad (when)
@@ -71,11 +70,11 @@ newClientWithSettings settings url = do
         }
 
 pointConsumer :: (MonadResource m, ToPoint p)
-               => InfluxDbClient -- ^ The client to use for interacting with influxdb.
-               -> Text -- ^ The database name.
-               -> Int64 -- ^ The max number of bytes to send per request. 
-               -> Series -- ^ The series to write points for.
-               -> Consumer p m ()
+              => InfluxDbClient -- ^ The client to use for interacting with influxdb.
+              -> Text -- ^ The database name.
+              -> Int64 -- ^ The max number of bytes to send per request. 
+              -> Series -- ^ The series to write points for.
+              -> Consumer p m ()
 pointConsumer client dbName size series = loop mempty 0
     where 
       (!prefCnt, !lnPrefix) =

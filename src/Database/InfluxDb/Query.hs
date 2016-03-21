@@ -166,11 +166,11 @@ textBuilder = byteString . encodeUtf8
 
 targetBuilder :: Target -> Builder
 targetBuilder (Field f) = textBuilder f 
-targetBuilder (Count f) = "COUNT(" <> textBuilder f <> ")"
-targetBuilder (Max f) = "MAX(" <> textBuilder f <> ")"
-targetBuilder (Min f) = "MIN(" <> textBuilder f <> ")"
-targetBuilder (Mean f) = "MEAN(" <> textBuilder f <> ")"
-targetBuilder (Sum f) = "SUM(" <> textBuilder f <> ")"
+targetBuilder (Count f) = "COUNT%28" <> textBuilder f <> "%29"
+targetBuilder (Max f)   = "MAX%28"   <> textBuilder f <> "%29"
+targetBuilder (Min f)   = "MIN%28"   <> textBuilder f <> "%29"
+targetBuilder (Mean f)  = "MEAN%28"  <> textBuilder f <> "%29"
+targetBuilder (Sum f)   = "SUM%28"   <> textBuilder f <> "%29"
 targetBuilder (Targets t) = foldl' (<>) mempty . intersperse "%2C" $ map targetBuilder t
 
 fromBuilder :: From -> Builder
@@ -185,8 +185,8 @@ whereBuilder (Lt a b) =       textBuilder a <> "%20%3C%20%27"  <> textBuilder b 
 whereBuilder (Ne a b) =       textBuilder a <> "%20!%3D%20%27" <> textBuilder b <> "%27"
 whereBuilder (Match a b) =    textBuilder a <> "%20%3D~%20%27" <> textBuilder b <> "%27"
 whereBuilder (NotMatch a b) = textBuilder a <> "%20!~%20%27" <> textBuilder b <> "%27"
-whereBuilder (And a b) = "(" <> whereBuilder a <> ") AND (" <> whereBuilder b <> ")"
-whereBuilder (Or a b) =  "(" <> whereBuilder a <> ") OR (" <> whereBuilder b <> ")"
+whereBuilder (And a b) = "%28" <> whereBuilder a <> "%29%20AND%20%28" <> whereBuilder b <> "%29"
+whereBuilder (Or a b) =  "%28" <> whereBuilder a <> "%29%20OR%20%28" <> whereBuilder b <> "%29"
 
 now :: Text
 now = "now()"
