@@ -31,7 +31,7 @@ import Data.Text.Encoding (encodeUtf8)
 import Data.Typeable (Typeable)
 
 import Database.InfluxDb.Types
-import Database.InfluxDb.Query (SelectStatement, toByteString)
+import Database.InfluxDb.Query (RenderQuery, toByteString)
 
 import qualified Blaze.ByteString.Builder as B
 
@@ -117,10 +117,18 @@ rawQuery client db = rawQueryInternal value client db . encodeUtf8
 rawQuery' :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery' client db = rawQueryInternal value' client db . encodeUtf8 
 
-query :: MonadResource m => InfluxDbClient -> Text -> SelectStatement -> m QueryResult
+query :: (MonadResource m, RenderQuery q)
+      => InfluxDbClient
+      -> Text
+      -> q
+      -> m QueryResult
 query client db = rawQueryInternal value client db . toByteString 
 
-query' :: MonadResource m => InfluxDbClient -> Text -> SelectStatement -> m QueryResult
+query' :: (MonadResource m, RenderQuery q)
+       => InfluxDbClient 
+       -> Text 
+       -> q 
+       -> m QueryResult
 query' client db = rawQueryInternal value' client db . toByteString 
 
 rawQueryInternal :: MonadResource m 

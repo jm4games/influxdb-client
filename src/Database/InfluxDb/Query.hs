@@ -7,6 +7,7 @@ module Database.InfluxDb.Query
   -- * Types  
     From
   , MultiSelect
+  , RenderQuery(..)
   , SelectStatement
   , Target
   , WhereClause
@@ -24,18 +25,18 @@ module Database.InfluxDb.Query
   , select
   , from
   , from'
-  , where'
+  , where_
   -- ** Target Functions
-  , countT
-  , fieldT
-  , maxT
-  , meanT
-  , minT
-  , sumT
-  -- * Conversion
-  , toByteString
+  , allFields
+  , count
+  , field
+  , fields
+  , funMax
+  , funMean
+  , funMin
+  , funSum
+  , targets
   -- * Helpers
-  , allT
   , now
   ) where
 
@@ -146,31 +147,37 @@ from = FromShort
 from' :: Text -> Text -> Text -> From
 from' = FromFull
 
-allT :: Target
-allT = Field "*"
+allFields :: Target
+allFields = Field "*"
 
-fieldT :: Text -> Target
-fieldT = Field
+field :: Text -> Target
+field = Field
 
-countT :: Text -> Target
-countT = Count
+count :: Text -> Target
+count = Count
 
-meanT :: Text -> Target
-meanT = Mean
+funMean :: Text -> Target
+funMean = Mean
 
-sumT :: Text -> Target
-sumT = Sum
+funSum :: Text -> Target
+funSum = Sum
 
-maxT :: Text -> Target
-maxT = Max
+funMax :: Text -> Target
+funMax = Max
 
-minT :: Text -> Target
-minT = Min
+funMin :: Text -> Target
+funMin = Min
 
-where' :: SelectStatement -> WhereClause -> SelectStatement
-infix 1 `where'`
-where' ss@Select { ssWhere = Nothing } w = ss { ssWhere = Just w }
-where' ss@Select { ssWhere = Just x } w = ss { ssWhere = Just $ And x w }
+fields :: [Text] -> Target
+fields = Targets . map Field
+
+targets :: [Target] -> Target
+targets = Targets
+
+where_ :: SelectStatement -> WhereClause -> SelectStatement
+infix 1 `where_`
+where_ ss@Select { ssWhere = Nothing } w = ss { ssWhere = Just w }
+where_ ss@Select { ssWhere = Just x } w = ss { ssWhere = Just $ And x w }
 
 textBuilder :: Text -> Builder
 textBuilder = byteString . encodeUtf8
