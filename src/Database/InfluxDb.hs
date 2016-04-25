@@ -18,7 +18,7 @@ module Database.InfluxDb
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
 import Control.Exception (Exception)
-import Control.Monad (when, void)
+import Control.Monad (unless, when, void)
 import Control.Monad.Catch (throwM)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (MonadResource, runResourceT)
@@ -30,7 +30,6 @@ import Data.Attoparsec.ByteString (Parser)
 import Data.Conduit (($$+-), Consumer, Producer, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
-import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -146,23 +145,16 @@ streamQuery _ _ [] = return ()
 streamQuery client db qs = do
   let (nxt, rest) = splitAt batchSize qs 
   resRef <- liftIO $ newEmptyMVar >>= (\x -> fetchData nxt x >> return x)
-  queriesRef <- liftIO $ newIORef rest 
-  resProducer resRef queriesRef 
+  resProducer resRef rest 
   where
     batchSize = 5
-    resProducer dataVar qRef = do
-      queries <- liftIO $ readIORef qRef
-      case queries of
-        [] -> return ()
-        vals -> do
-          res <- liftIO $ do 
-            myData <- takeMVar dataVar
-            let (nxt, rest) = splitAt batchSize vals
-            writeIORef qRef rest 
-            fetchData nxt dataVar
-            return myData 
-          yield res
-          resProducer dataVar qRef
+    resProducer dataVar [] = liftIO (takeMVar dataVar) >>= yield
+    resProducer dataVar queries = do
+      myData <- liftIO $ takeMVar dataVar
+      let (nxt, rest) = splitAt batchSize queries 
+      unless (null nxt) . liftIO $ fetchData nxt dataVar
+      yield myData 
+      resProducer dataVar rest 
     fetchData :: MultiSelect -> MVar QueryResult -> IO ()
     fetchData vals dataVar = void . forkIO . runResourceT $
       rawQueryInternal value' client db (toByteString vals) >>= (liftIO . putMVar dataVar)
