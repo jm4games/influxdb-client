@@ -7,7 +7,7 @@ module Database.InfluxDb.Query
   -- * Types  
     From
   , MultiSelect
-  , RenderQuery(..)
+  , Query(..)
   , SelectStatement
   , Target
   , WhereClause
@@ -61,7 +61,7 @@ data SelectStatement = Select
 instance Show SelectStatement where
   show = show . toByteString
 
-instance RenderQuery SelectStatement where
+instance Query SelectStatement where
   toByteString ss = toStrict . toLazyByteString $ selectBuilder
     <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
     where
@@ -70,10 +70,10 @@ instance RenderQuery SelectStatement where
 
 type MultiSelect = [SelectStatement]
 
-instance RenderQuery MultiSelect where
+instance Query MultiSelect where
   toByteString = intercalate "%3B" . map toByteString
 
-class RenderQuery q where
+class Query q where
   toByteString :: q -> ByteString
 
 data Target = Count  !Text

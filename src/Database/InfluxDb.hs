@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 
 module Database.InfluxDb
@@ -11,27 +12,32 @@ module Database.InfluxDb
    , query
    , query'
    , rawQuery
-   , rawQuery') where
+   , rawQuery'
+   , streamQuery) where
 
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
 import Control.Exception (Exception)
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Control.Monad.Catch (throwM)
-import Control.Monad.Trans.Resource (MonadResource)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Resource (MonadResource, runResourceT)
 
 import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
 import Data.Aeson.Types(Result(..), parse)
 import Data.Attoparsec.ByteString (Parser)
-import Data.Conduit (($$+-), Consumer, await)
+import Data.Conduit (($$+-), Consumer, Producer, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Data.Typeable (Typeable)
 
 import Database.InfluxDb.Types
-import Database.InfluxDb.Query (RenderQuery, toByteString)
+import Database.InfluxDb.Query (MultiSelect, Query, toByteString)
 
 import qualified Blaze.ByteString.Builder as B
 
@@ -117,19 +123,49 @@ rawQuery client db = rawQueryInternal value client db . encodeUtf8
 rawQuery' :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery' client db = rawQueryInternal value' client db . encodeUtf8 
 
-query :: (MonadResource m, RenderQuery q)
+query :: (MonadResource m, Query q)
       => InfluxDbClient
       -> Text
       -> q
       -> m QueryResult
 query client db = rawQueryInternal value client db . toByteString 
 
-query' :: (MonadResource m, RenderQuery q)
+query' :: (MonadResource m, Query q)
        => InfluxDbClient 
        -> Text 
        -> q 
        -> m QueryResult
 query' client db = rawQueryInternal value' client db . toByteString 
+
+streamQuery :: MonadResource m
+            => InfluxDbClient 
+            -> Text 
+            -> MultiSelect 
+            -> Producer m QueryResult
+streamQuery _ _ [] = return ()
+streamQuery client db qs = do
+  let (nxt, rest) = splitAt batchSize qs 
+  resRef <- liftIO $ newEmptyMVar >>= (\x -> fetchData nxt x >> return x)
+  queriesRef <- liftIO $ newIORef rest 
+  resProducer resRef queriesRef 
+  where
+    batchSize = 5
+    resProducer dataVar qRef = do
+      queries <- liftIO $ readIORef qRef
+      case queries of
+        [] -> return ()
+        vals -> do
+          res <- liftIO $ do 
+            myData <- takeMVar dataVar
+            let (nxt, rest) = splitAt batchSize vals
+            writeIORef qRef rest 
+            fetchData nxt dataVar
+            return myData 
+          yield res
+          resProducer dataVar qRef
+    fetchData :: MultiSelect -> MVar QueryResult -> IO ()
+    fetchData vals dataVar = void . forkIO . runResourceT $
+      rawQueryInternal value' client db (toByteString vals) >>= (liftIO . putMVar dataVar)
 
 rawQueryInternal :: MonadResource m 
                  => Parser Value 
