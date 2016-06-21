@@ -19,7 +19,7 @@ import qualified Data.Aeson as A
 
 data RetentionPolicy = RetentionPolicy
     { rpName :: !Text
-    , rpDuration :: !Duration 
+    , rpDuration :: !Duration
     , rpReplication :: !(Maybe Int)
     }
 
@@ -35,7 +35,7 @@ type FieldValue = Maybe Text
 type FieldSet = V.Vector (FieldKey, FieldValue)
 
 data Point = Point
-    { pTimestamp :: !(Maybe Word64)
+    { pTimestamp :: !(Maybe ~Word64)
     , pFields :: !FieldSet
     }
     deriving (Show)
@@ -65,50 +65,50 @@ instance A.FromJSON QueryResult where
                Nothing -> do
                    rErr <- o A..:? "error"
                    case rErr of
-                      Just (A.String err) -> return $ QueryError err 
+                      Just (A.String err) -> return $ QueryError err
                       _ -> error "Unexpected result."
         where
             readSeries series
               | series == V.empty = return $ SeriesResult mempty V.empty
               | otherwise = do
                   let series1 = unwrapObj $ series V.! 0
-                  name <- readText series1 "name" 
-                  cols <- V.map unwrapText <$> readArray series1 "columns" 
+                  name <- readText series1 "name"
+                  cols <- V.map unwrapText <$> readArray series1 "columns"
                   let tIndex = V.findIndex ("time" ==) cols
-                  points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"  
+                  points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"
                   return $ SeriesResult name points
 
-            unwrapObj (A.Object x) = x 
+            unwrapObj (A.Object x) = x
             unwrapObj _ =  error "Unexpected json value (expected obj)."
 
-            unwrapText (A.String s) = s 
+            unwrapText (A.String s) = s
             unwrapText _ =  error "Unexpected json value (expected text)."
 
-            unwrapNumber (A.Number n) = n 
+            unwrapNumber (A.Number n) = n
             unwrapNumber _ =  error "Unexpected json value (expected text)."
 
             readArray obj name = obj A..:? name >>= \x ->
                 case x of
-                    Just (A.Array a) -> return a 
+                    Just (A.Array a) -> return a
                     Nothing -> return V.empty
                     _ -> error $ show name ++ " is not a array property."
 
             readText obj name = obj A..: name >>= \x ->
                 case x of
-                    A.String s -> return s 
+                    A.String s -> return s
                     _ -> error $ show name ++ " is not a text property."
 
             readPoint !tIndex cols (A.Array a) = Point
-                { pTimestamp = fromMaybe (error "Invalid Timestamp") . toBoundedInteger 
+                { pTimestamp = fromMaybe (error "Invalid Timestamp") . toBoundedInteger
                                 . unwrapNumber . (V.!) a <$> tIndex
-                , pFields = V.zipWith (\c b -> (c , maybeUnwrapText b)) cols a 
+                , pFields = V.zipWith (\c b -> (c , maybeUnwrapText b)) cols a
                 }
             readPoint _ _ _ = error "Unexpected json type in value array."
 
-            maybeUnwrapText val = 
+            maybeUnwrapText val =
                 case val of
                     (A.String s) -> Just s
-                    (A.Number n) -> Just . either showt showt $ 
+                    (A.Number n) -> Just . either showt showt $
                         (floatingOrInteger :: Scientific -> Either Double Int64) n
                     (A.Bool b) -> Just $ showt b
                     A.Null -> Nothing

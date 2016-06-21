@@ -3,8 +3,8 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module Database.InfluxDb.Query
-  ( 
-  -- * Types  
+  (
+  -- * Types
     From
   , MultiSelect
   , Query(..)
@@ -66,7 +66,7 @@ instance Query SelectStatement where
     <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
     where
       selectBuilder = "SELECT%20" <> targetBuilder (ssTarget ss) <>
-                      "%20FROM%20" <> fromBuilder (ssFrom ss) 
+                      "%20FROM%20" <> fromBuilder (ssFrom ss)
 
 type MultiSelect = [SelectStatement]
 
@@ -90,10 +90,10 @@ data From = FromShort Text
 data WhereClause = And      !WhereClause !WhereClause
                  | Or       !WhereClause !WhereClause
                  | Eq       !Text !Text
-                 | Ne       !Text !Text 
+                 | Ne       !Text !Text
                  | Gt       !Text !Text
-                 | Lt       !Text !Text 
-                 | Match    !Text !Text 
+                 | Lt       !Text !Text
+                 | Match    !Text !Text
                  | NotMatch !Text !Text
 
 (.&&.) :: WhereClause -> WhereClause -> WhereClause
@@ -183,7 +183,7 @@ textBuilder :: Text -> Builder
 textBuilder = byteString . encodeUtf8
 
 targetBuilder :: Target -> Builder
-targetBuilder (Field f) = textBuilder f 
+targetBuilder (Field f) = textBuilder f
 targetBuilder (Count f) = "COUNT%28" <> textBuilder f <> "%29"
 targetBuilder (Max f)   = "MAX%28"   <> textBuilder f <> "%29"
 targetBuilder (Min f)   = "MIN%28"   <> textBuilder f <> "%29"
@@ -193,7 +193,7 @@ targetBuilder (Targets t) = foldl' (<>) mempty . intersperse "%2C" $ map targetB
 
 fromBuilder :: From -> Builder
 fromBuilder (FromShort t) = textBuilder t
-fromBuilder (FromFull db ret m) = 
+fromBuilder (FromFull db ret m) =
   textBuilder db <> byteString ".\"" <> textBuilder ret <> "\"." <> textBuilder m
 
 whereBuilder :: WhereClause -> Builder
