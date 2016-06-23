@@ -35,7 +35,7 @@ type FieldValue = Maybe Text
 type FieldSet = V.Vector (FieldKey, FieldValue)
 
 data Point = Point
-    { pTimestamp :: !(Maybe ~Word64)
+    { pTimestamp :: !(Maybe Word64)
     , pFields :: !FieldSet
     }
     deriving (Show)

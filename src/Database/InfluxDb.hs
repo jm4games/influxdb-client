@@ -148,7 +148,7 @@ streamQuery client db qs = do
   resProducer resRef rest
   where
     batchSize = 5
-    resProducer dataVar [] = liftIO (takeMVar dataVar) >>= yield
+    resProducer dataVar [] = liftIO (takeMVar dataVar) >>= yield >> return ()
     resProducer dataVar queries = do
       myData <- liftIO $ takeMVar dataVar
       let (nxt, rest) = splitAt batchSize queries
