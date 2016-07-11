@@ -13,7 +13,9 @@ module Database.InfluxDb
    , query'
    , rawQuery
    , rawQuery'
-   , streamQuery) where
+   , sendSeriesPoints
+   , streamQuery
+   ) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
@@ -30,6 +32,7 @@ import Data.Attoparsec.ByteString (Parser)
 import Data.Conduit (($$+-), Consumer, Producer, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
+import Data.List (foldl')
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -67,7 +70,7 @@ newClient = newClientWithSettings N.tlsManagerSettings
 
 newClientWithSettings :: N.ManagerSettings -> String -> IO InfluxDbClient
 newClientWithSettings settings url = do
-    req <- N.parseUrl url
+    req <- N.parseRequest url
     mng <- N.newManager settings
     return InfluxDb
         { icManager = mng
@@ -80,41 +83,66 @@ pointConsumer :: (MonadResource m, ToPoint p)
               -> Int64 -- ^ The max number of bytes to send per request.
               -> Series -- ^ The series to write points for.
               -> Consumer p m ()
-pointConsumer client dbName size series = loop mempty 0
+pointConsumer client !dbName !size !series = loop mempty 0
     where
-      (!prefCnt, !lnPrefix) =
-          (fromIntegral $ BS.length pref + 1, B.insertByteString $ pref `BS.append` " ")
-        where pref
-                | M.null (sTagSet series) = encodeUtf8 (sMeasurement series)
-                | otherwise = BS.intercalate "," (encodeUtf8 (sMeasurement series) : tags)
-                    where tags = map kvLBS $ M.toList (sTagSet series)
-      kvLBS (k, v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
-      kvLBS' (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
-      kvLBS' (_, Nothing) = ""
+      (!prefCnt, !lnPrefix) = seriesToBuilder series
+      sendReq = sendWriteRequest client dbName
       loop body !byteCnt = await >>= maybe
                                     (when (byteCnt > 0) $ sendReq body byteCnt)
-                                    (bodyApp body byteCnt . toPoint)
-      bodyApp body byteCnt p
+                                    (bodyAppend body byteCnt . toPoint)
+      bodyAppend body byteCnt p
         | byteCnt' > size = sendReq body byteCnt >> loop pointBld cnt
         | otherwise = loop (body <> pointBld) byteCnt'
         where
-          dataLbs = (LBS.intercalate "," . map (LBS.fromStrict . kvLBS') . V.toList $ pFields p) <>
-                    maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
+          dataLbs = pointToByteString p
           pointBld = lnPrefix <> B.insertLazyByteString dataLbs
           !cnt = prefCnt + LBS.length dataLbs
           !byteCnt' = byteCnt + cnt
-      !dbQueryString = "db=" `BS.append` encodeUtf8 dbName
-      sendReq body byteCnt = do
-          res <- N.http req' (icManager client)
-          when (N.responseStatus res /= N.status204) $
-            throwM . IngestionError . show $ N.responseStatus res
-          where
-            req' = (icDefaultRequest client)
-                    { N.method  = N.methodPost
-                    , N.requestBody = N.RequestBodyBuilder byteCnt body
-                    , N.path = "/write"
-                    , N.queryString = dbQueryString
-                    }
+
+seriesToBuilder :: Series -> (Int64, B.Builder)
+seriesToBuilder series = (fromIntegral $ BS.length pref + 1, B.insertByteString $ pref `BS.append` " ")
+  where
+    pref | M.null (sTagSet series) = encodeUtf8 (sMeasurement series)
+         | otherwise = BS.intercalate "," (encodeUtf8 (sMeasurement series) : tags)
+             where tags = map kvLBS $ M.toList (sTagSet series)
+    kvLBS (k, v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
+
+pointToByteString :: Point -> LBS.ByteString
+pointToByteString p = (LBS.intercalate "," . map (LBS.fromStrict . fieldToByteString) . V.toList $ pFields p) <>
+                     maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
+  where
+    fieldToByteString (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
+    fieldToByteString (_, Nothing) = ""
+
+sendWriteRequest :: MonadResource m => InfluxDbClient -> Text -> B.Builder -> Int64 -> m ()
+sendWriteRequest client dbName body bodySize = do
+  res <- N.http req' (icManager client)
+  when (N.responseStatus res /= N.status204) $
+    throwM . IngestionError . show $ N.responseStatus res
+  where
+    !dbQueryString = "db=" `BS.append` encodeUtf8 dbName
+    req' = (icDefaultRequest client)
+            { N.method  = N.methodPost
+            , N.requestBody = N.RequestBodyBuilder bodySize body
+            , N.path = "/write"
+            , N.queryString = dbQueryString
+            }
+
+sendSeriesPoints :: (MonadResource m, ToSeriesPoint p)
+                 => InfluxDbClient -- ^ The client to use for interacting with influxdb.
+                 -> Text -- ^ The database name.
+                 -> [p]
+                 -> m ()
+sendSeriesPoints client !dbName points = sendWriteRequest client dbName body bodySize
+  where
+    (!bodySize, body) = foldl' appendPoint (0, mempty) points
+    appendPoint (!bSize, bdy) val = (bSize + cnt, bdy <> pointBld)
+      where
+        (series, p) = toSeriesPoint val
+        (!prefSize, !pref) = seriesToBuilder series
+        dataLbs = pointToByteString p
+        pointBld = pref <> B.insertLazyByteString dataLbs
+        !cnt = prefSize + LBS.length dataLbs
 
 rawQuery :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery client db = rawQueryInternal value client db . encodeUtf8
