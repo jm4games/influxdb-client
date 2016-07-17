@@ -13,6 +13,7 @@ module Database.InfluxDb
    , query'
    , rawQuery
    , rawQuery'
+   , sendPoints
    , sendSeriesPoints
    , streamQuery
    ) where
@@ -127,6 +128,22 @@ sendWriteRequest client dbName body bodySize = do
             , N.path = "/write"
             , N.queryString = dbQueryString
             }
+
+sendPoints :: (MonadResource m, ToPoint p)
+           => InfluxDbClient -- ^ The client to use for interacting with influxdb.
+           -> Text -- ^ The database name.
+           -> Series
+           -> [p]
+           -> m ()
+sendPoints client !dbName series points = sendWriteRequest client dbName body bodySize
+  where
+    (!bodySize, body) = foldl' appendPoint (0, mempty) points
+    (!prefSize, !pref) = seriesToBuilder series
+    appendPoint (!bSize, bdy) p = (bSize + cnt, bdy <> pointBld)
+      where
+        pointLbs = pointToByteString $ toPoint p
+        pointBld = pref <> B.insertLazyByteString pointLbs
+        !cnt = prefSize + LBS.length pointLbs
 
 sendSeriesPoints :: (MonadResource m, ToSeriesPoint p)
                  => InfluxDbClient -- ^ The client to use for interacting with influxdb.

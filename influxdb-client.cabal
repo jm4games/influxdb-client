@@ -1,12 +1,12 @@
 name:                influxdb-client
-version:             0.1.0.2
+version:             0.1.1.1
 license:             BSD3
 license-file:        LICENSE
 author:              Joshua Montgomery
 maintainer:          josh1s4live@gmail.com
 category:            Database
 build-type:          Simple
-cabal-version:       >=1.10
+cabal-version:       >= 1.10
 
 library
   hs-source-dirs:      src
