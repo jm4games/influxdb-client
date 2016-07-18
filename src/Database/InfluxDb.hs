@@ -109,8 +109,9 @@ seriesToBuilder series = (fromIntegral $ BS.length pref + 1, B.insertByteString 
     kvLBS (k, v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
 
 pointToByteString :: Point -> LBS.ByteString
-pointToByteString p = (LBS.intercalate "," . map (LBS.fromStrict . fieldToByteString) . V.toList $ pFields p) <>
-                     maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
+pointToByteString p =
+  (LBS.intercalate "," . map (LBS.fromStrict . fieldToByteString) . V.toList $ pFields p) <>
+  maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
   where
     fieldToByteString (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
     fieldToByteString (_, Nothing) = ""
@@ -121,7 +122,7 @@ sendWriteRequest client dbName body bodySize = do
   when (N.responseStatus res /= N.status204) $
     throwM . IngestionError . show $ N.responseStatus res
   where
-    !dbQueryString = "db=" `BS.append` encodeUtf8 dbName
+    !dbQueryString = "db=" `BS.append` encodeUtf8 dbName `BS.append` "&precision=n"
     req' = (icDefaultRequest client)
             { N.method  = N.methodPost
             , N.requestBody = N.RequestBodyBuilder bodySize body
@@ -134,12 +135,12 @@ sendPoints :: (MonadResource m, ToPoint p)
            -> Text -- ^ The database name.
            -> Series
            -> [p]
-           -> m ()
-sendPoints client !dbName series points = sendWriteRequest client dbName body bodySize
+           -> m Int64
+sendPoints client !dbName series points = sendWriteRequest client dbName body bodySize >> return totalCnt
   where
-    (!bodySize, body) = foldl' appendPoint (0, mempty) points
+    (!bodySize, body, !totalCnt) = foldl' appendPoint (0, mempty, 0) points
     (!prefSize, !pref) = seriesToBuilder series
-    appendPoint (!bSize, bdy) p = (bSize + cnt, bdy <> pointBld)
+    appendPoint (!bSize, bdy, !pCnt) p = (bSize + cnt, bdy <> pointBld, pCnt + 1)
       where
         pointLbs = pointToByteString $ toPoint p
         pointBld = pref <> B.insertLazyByteString pointLbs
@@ -149,11 +150,11 @@ sendSeriesPoints :: (MonadResource m, ToSeriesPoint p)
                  => InfluxDbClient -- ^ The client to use for interacting with influxdb.
                  -> Text -- ^ The database name.
                  -> [p]
-                 -> m ()
-sendSeriesPoints client !dbName points = sendWriteRequest client dbName body bodySize
+                 -> m Int64
+sendSeriesPoints client !dbName points = sendWriteRequest client dbName body bodySize >> return totalCnt
   where
-    (!bodySize, body) = foldl' appendPoint (0, mempty) points
-    appendPoint (!bSize, bdy) val = (bSize + cnt, bdy <> pointBld)
+    (!bodySize, body, !totalCnt) = foldl' appendPoint (0, mempty, 0) points
+    appendPoint (!bSize, bdy, !pCnt) val = (bSize + cnt, bdy <> pointBld, pCnt + 1)
       where
         (series, p) = toSeriesPoint val
         (!prefSize, !pref) = seriesToBuilder series
