@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Database.InfluxDb
    ( module Database.InfluxDb.Types
@@ -15,22 +16,25 @@ module Database.InfluxDb
    , rawQuery'
    , sendPoints
    , sendSeriesPoints
+   , streamSeriesResults
    , streamQuery
    ) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent.Lifted (fork)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
-import Control.Exception (Exception)
+import Control.Exception (Exception, throwIO)
 import Control.Monad (unless, when, void)
 import Control.Monad.Catch (throwM)
+import Control.Monad.Morph (lift)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Resource (MonadResource, runResourceT)
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Trans.Resource (MonadResource)
 
 import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
 import Data.Aeson.Types(Result(..), parse)
 import Data.Attoparsec.ByteString (Parser)
-import Data.Conduit (($$+-), Consumer, Producer, await, yield)
+import Data.Conduit (($$+-), Consumer, Source, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -57,6 +61,7 @@ import qualified Text.Show.ByteString as TB
 
 data InfluxDbException = IngestionError String
                        | ParseError String
+                       | QueryException Text
                        deriving (Typeable, Show)
 
 instance Exception InfluxDbException
@@ -182,28 +187,43 @@ query' :: (MonadResource m, Query q)
        -> m QueryResult
 query' client db = rawQueryInternal value' client db . toByteString
 
-streamQuery :: MonadResource m
+streamQuery :: (MonadResource m, MonadBaseControl IO m)
             => InfluxDbClient
             -> Text
             -> MultiSelect
-            -> Producer m QueryResult
+            -> Source m QueryResult
 streamQuery _ _ [] = return ()
-streamQuery client db qs = do
+streamQuery client db qs = streamQueryInternal 5 qs (rawQueryInternal value' client db)
+
+streamSeriesResults :: (MonadResource m, MonadBaseControl IO m, FromSeriesResult r)
+                    => InfluxDbClient
+                    -> Text
+                    -> MultiSelect
+                    -> Source m (V.Vector r)
+streamSeriesResults _ _ [] = return ()
+streamSeriesResults client db qs = streamQueryInternal 5 qs (rawPointQueryInternal value' client db)
+
+streamQueryInternal :: forall a m. (MonadResource m, MonadBaseControl IO m)
+                    => Int -- ^ Batch size.
+                    -> MultiSelect
+                    -> (BS.ByteString -> m a)
+                    -> Source m a
+streamQueryInternal batchSize qs runQry = do
   let (nxt, rest) = splitAt batchSize qs
-  resRef <- liftIO $ newEmptyMVar >>= (\x -> fetchData nxt x >> return x)
-  resProducer resRef rest
+  mvar <- liftIO newEmptyMVar
+  lift $ fetchData nxt mvar
+  resProducer mvar rest
   where
-    batchSize = 5
     resProducer dataVar [] = liftIO (takeMVar dataVar) >>= yield >> return ()
     resProducer dataVar queries = do
       myData <- liftIO $ takeMVar dataVar
       let (nxt, rest) = splitAt batchSize queries
-      unless (null nxt) . liftIO $ fetchData nxt dataVar
+      unless (null nxt) . lift $ fetchData nxt dataVar
       yield myData
       resProducer dataVar rest
-    fetchData :: MultiSelect -> MVar QueryResult -> IO ()
-    fetchData vals dataVar = void . forkIO . runResourceT $
-      rawQueryInternal value' client db (toByteString vals) >>= (liftIO . putMVar dataVar)
+    fetchData :: MultiSelect -> MVar a -> m ()
+    fetchData vals dataVar = void . fork $
+      runQry (toByteString vals) >>= (liftIO . putMVar dataVar)
 
 rawQueryInternal :: MonadResource m
                  => Parser Value
@@ -224,3 +244,15 @@ rawQueryInternal parser client db qry = do
                 , N.path = "/query"
                 , N.queryString = BS.concat [dbString, "&epoch=ns&q=", qry]
                 }
+
+rawPointQueryInternal :: (MonadResource m, FromSeriesResult r)
+                      => Parser Value
+                      -> InfluxDbClient
+                      -> Text
+                      -> BS.ByteString
+                      -> m (V.Vector r)
+rawPointQueryInternal parser client db qry = do
+  res <- rawQueryInternal parser client db qry
+  case res of
+    QueryError err -> liftIO (throwIO $ QueryException err)
+    QueryResult rs -> return $ V.map fromSeriesResult rs

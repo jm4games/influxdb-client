@@ -13,47 +13,54 @@ import Data.Word (Word64)
 import TextShow (showt)
 
 import qualified Data.Map.Strict as M
+import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import qualified Data.Aeson as A
 
 data RetentionPolicy = RetentionPolicy
-    { rpName :: !Text
-    , rpDuration :: !Duration
-    , rpReplication :: !(Maybe Int)
-    }
+  { rpName :: !Text
+  , rpDuration :: !Duration
+  , rpReplication :: !(Maybe Int)
+  }
 
 data Duration = Hours !Int | Days !Int | Weeks !Int | INF
 
 data Series = Series
-    { sMeasurement :: !Text
-    , sTagSet :: !(M.Map Text Text)
-    }
+  { sMeasurement :: !Text
+  , sTagSet :: !(M.Map Text Text)
+  } deriving (Show)
 
 type FieldKey = Text
 type FieldValue = Maybe Text
 type FieldSet = V.Vector (FieldKey, FieldValue)
 
 data Point = Point
-    { pTimestamp :: !(Maybe Word64)
-    , pFields :: !FieldSet
-    }
-    deriving (Show)
+  { pTimestamp :: !(Maybe Word64)
+  , pFields :: !FieldSet
+  }
+  deriving (Show)
 
 instance ToPoint Point where
-    toPoint = id
+  toPoint = id
 
 class ToPoint a where
-    toPoint :: a -> Point
+  toPoint :: a -> Point
+
+class FromPoint a where
+  fromPoint :: Point -> a
 
 class ToSeriesPoint a where
-    toSeriesPoint :: a -> (Series, Point)
+  toSeriesPoint :: a -> (Series, Point)
 
-data QueryResult =  QueryError !Text
-                  | QueryResult (V.Vector SeriesResult)
-                  deriving (Show)
+class FromSeriesResult a where
+  fromSeriesResult :: SeriesResult -> a
 
-data SeriesResult = SeriesResult Text (V.Vector Point) deriving (Show)
+data QueryResult = QueryError !Text
+                 | QueryResult (V.Vector SeriesResult)
+                 deriving (Show)
+
+data SeriesResult = SeriesResult Series (V.Vector Point) deriving (Show)
 
 instance A.FromJSON QueryResult where
     parseJSON (A.Object o) =
@@ -69,14 +76,17 @@ instance A.FromJSON QueryResult where
                       _ -> error "Unexpected result."
         where
             readSeries series
-              | series == V.empty = return $ SeriesResult mempty V.empty
+              | series == V.empty = return $ SeriesResult (Series mempty M.empty) V.empty
               | otherwise = do
                   let series1 = unwrapObj $ series V.! 0
+                      mkPair val = let (k, v) = T.breakOn "=" val in (k, T.drop 1 v)
                   name <- readText series1 "name"
+                  tags <- maybe M.empty (M.fromList . map mkPair . T.split (== ','))
+                          <$> tryReadText series1 "tags"
                   cols <- V.map unwrapText <$> readArray series1 "columns"
                   let tIndex = V.findIndex ("time" ==) cols
                   points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"
-                  return $ SeriesResult name points
+                  return $ SeriesResult (Series name tags) points
 
             unwrapObj (A.Object x) = x
             unwrapObj _ =  error "Unexpected json value (expected obj)."
@@ -104,6 +114,12 @@ instance A.FromJSON QueryResult where
                 , pFields = V.zipWith (\c b -> (c , maybeUnwrapText b)) cols a
                 }
             readPoint _ _ _ = error "Unexpected json type in value array."
+
+            tryReadText obj name = obj A..:? name >>= \x ->
+                case x of
+                    Just (A.String s) -> return (Just s)
+                    Just _ -> error $ show name ++ " is not a text property."
+                    Nothing -> return Nothing
 
             maybeUnwrapText val =
                 case val of
