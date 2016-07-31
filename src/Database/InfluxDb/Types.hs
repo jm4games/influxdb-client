@@ -12,8 +12,8 @@ import Data.Word (Word64)
 
 import TextShow (showt)
 
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Map.Strict as M
-import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import qualified Data.Aeson as A
@@ -79,14 +79,19 @@ instance A.FromJSON QueryResult where
               | series == V.empty = return $ SeriesResult (Series mempty M.empty) V.empty
               | otherwise = do
                   let series1 = unwrapObj $ series V.! 0
-                      mkPair val = let (k, v) = T.breakOn "=" val in (k, T.drop 1 v)
                   name <- readText series1 "name"
-                  tags <- maybe M.empty (M.fromList . map mkPair . T.split (== ','))
-                          <$> tryReadText series1 "tags"
+                  tags <- fromMaybe M.empty <$> tryReadTags series1
                   cols <- V.map unwrapText <$> readArray series1 "columns"
                   let tIndex = V.findIndex ("time" ==) cols
                   points <- V.map (readPoint tIndex cols) <$> readArray series1 "values"
                   return $ SeriesResult (Series name tags) points
+                  where
+                    tryReadTags obj = obj A..:? "tags" >>= \x ->
+                      case x of
+                        Just (A.Object s) ->
+                          return . Just . M.fromList . map (\(k, v) -> (k, unwrapText v)) $ HM.toList s
+                        Just _ -> error "tags is not an object."
+                        Nothing -> return Nothing
 
             unwrapObj (A.Object x) = x
             unwrapObj _ =  error "Unexpected json value (expected obj)."
@@ -114,12 +119,6 @@ instance A.FromJSON QueryResult where
                 , pFields = V.zipWith (\c b -> (c , maybeUnwrapText b)) cols a
                 }
             readPoint _ _ _ = error "Unexpected json type in value array."
-
-            tryReadText obj name = obj A..:? name >>= \x ->
-                case x of
-                    Just (A.String s) -> return (Just s)
-                    Just _ -> error $ show name ++ " is not a text property."
-                    Nothing -> return Nothing
 
             maybeUnwrapText val =
                 case val of
