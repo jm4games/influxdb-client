@@ -34,7 +34,7 @@ import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
 import Data.Aeson.Types(Result(..), parse)
 import Data.Attoparsec.ByteString (Parser)
-import Data.Conduit (($$+-), Consumer, Source, await, yield)
+import Data.Conduit (($$+-), Consumer, Producer, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -191,7 +191,7 @@ streamQuery :: (MonadResource m, MonadBaseControl IO m)
             => InfluxDbClient
             -> Text
             -> MultiSelect
-            -> Source m QueryResult
+            -> Producer m QueryResult
 streamQuery _ _ [] = return ()
 streamQuery client db qs = streamQueryInternal 5 qs (rawQueryInternal value' client db)
 
@@ -199,7 +199,7 @@ streamSeriesResults :: (MonadResource m, MonadBaseControl IO m, FromSeriesResult
                     => InfluxDbClient
                     -> Text
                     -> MultiSelect
-                    -> Source m (V.Vector r)
+                    -> Producer m (V.Vector r)
 streamSeriesResults _ _ [] = return ()
 streamSeriesResults client db qs = streamQueryInternal 5 qs (rawPointQueryInternal value' client db)
 
@@ -207,7 +207,7 @@ streamQueryInternal :: forall a m. (MonadResource m, MonadBaseControl IO m)
                     => Int -- ^ Batch size.
                     -> MultiSelect
                     -> (BS.ByteString -> m a)
-                    -> Source m a
+                    -> Producer m a
 streamQueryInternal batchSize qs runQry = do
   let (nxt, rest) = splitAt batchSize qs
   mvar <- liftIO newEmptyMVar
@@ -255,4 +255,5 @@ rawPointQueryInternal parser client db qry = do
   res <- rawQueryInternal parser client db qry
   case res of
     QueryError err -> liftIO (throwIO $ QueryException err)
-    QueryResult rs -> return $ V.map fromSeriesResult rs
+    QueryResult rs -> return . V.map fromSeriesResult $
+                        V.filter (\(SeriesResult (Series name _) _) -> name /= "") rs
