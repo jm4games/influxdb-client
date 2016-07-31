@@ -22,7 +22,8 @@ module Database.InfluxDb
 
 import Control.Concurrent.Lifted (fork)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
-import Control.Exception (Exception, throwIO)
+import Control.Exception (Exception, throwIO, SomeException)
+import Control.Exception.Lifted (try)
 import Control.Monad (unless, when, void)
 import Control.Monad.Catch (throwM)
 import Control.Monad.Morph (lift)
@@ -214,16 +215,19 @@ streamQueryInternal batchSize qs runQry = do
   lift $ fetchData nxt mvar
   resProducer mvar rest
   where
-    resProducer dataVar [] = liftIO (takeMVar dataVar) >>= yield >> return ()
+    resProducer dataVar [] = liftIO (takeMVar dataVar) >>= either throwM yield >> return ()
     resProducer dataVar queries = do
-      myData <- liftIO $ takeMVar dataVar
-      let (nxt, rest) = splitAt batchSize queries
-      unless (null nxt) . lift $ fetchData nxt dataVar
-      yield myData
-      resProducer dataVar rest
-    fetchData :: MultiSelect -> MVar a -> m ()
+      result <- liftIO $ takeMVar dataVar
+      case result of
+        Right myData -> do
+          let (nxt, rest) = splitAt batchSize queries
+          unless (null nxt) . lift $ fetchData nxt dataVar
+          yield myData
+          resProducer dataVar rest
+        Left e -> throwM e
+    fetchData :: MultiSelect -> MVar (Either SomeException a) -> m ()
     fetchData vals dataVar = void . fork $
-      runQry (toByteString vals) >>= (liftIO . putMVar dataVar)
+      try (runQry (toByteString vals)) >>= (liftIO . putMVar dataVar)
 
 rawQueryInternal :: MonadResource m
                  => Parser Value
