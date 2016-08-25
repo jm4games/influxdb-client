@@ -51,6 +51,7 @@ import qualified Blaze.ByteString.Builder as B
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Lazy.Char8 as LBS8
 import qualified Data.Map.Strict as M
 import qualified Data.Vector as V
 
@@ -60,7 +61,7 @@ import qualified Network.HTTP.Types.Method as N
 
 import qualified Text.Show.ByteString as TB
 
-data InfluxDbException = IngestionError String
+data InfluxDbException = IngestionError String String
                        | ParseError String
                        | QueryException Text
                        deriving (Typeable, Show)
@@ -126,7 +127,7 @@ sendWriteRequest :: MonadResource m => InfluxDbClient -> Text -> B.Builder -> In
 sendWriteRequest client dbName body bodySize = do
   res <- N.http req' (icManager client)
   when (N.responseStatus res /= N.status204) $
-    throwM . IngestionError . show $ N.responseStatus res
+    throwM . IngestionError (LBS8.unpack $ B.toLazyByteString body) . show $ N.responseStatus res
   where
     !dbQueryString = "db=" `BS.append` encodeUtf8 dbName `BS.append` "&precision=n"
     req' = (icDefaultRequest client)
