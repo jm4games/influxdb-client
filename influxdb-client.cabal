@@ -22,7 +22,7 @@ library
     Database.InfluxDb.Types
 
   build-depends:
-    aeson                   >= 0.11 && < 0.12,
+    aeson                   >= 1.0  && < 1.1,
     attoparsec              >= 0.13 && < 0.14,
     base                    >= 4.8  && < 4.9,
     blaze-builder           >= 0.4  && < 0.5,
@@ -34,7 +34,7 @@ library
     containers              >= 0.5  && < 0.6,
     exceptions              >= 0.8  && < 0.9,
     http-conduit            >= 2.1  && < 2.5,
-    http-types              >= 0.8  && < 0.9,
+    http-types              >= 0.8  && < 0.10,
     lifted-base             >= 0.2  && < 0.3,
     monad-control           >= 1.0  && < 1.1,
     mmorph                  >= 1.0  && < 1.1,
