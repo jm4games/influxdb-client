@@ -56,6 +56,9 @@ class ToSeriesPoint a where
 class FromSeriesResult a where
   fromSeriesResult :: SeriesResult -> a
 
+instance FromSeriesResult SeriesResult where
+  fromSeriesResult = id
+
 data QueryResult = QueryError !Text
                  | QueryResult (V.Vector SeriesResult)
                  deriving (Show)
