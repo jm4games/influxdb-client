@@ -242,7 +242,7 @@ whereBuilder (And a b) = "%28" <> whereBuilder a <> "%29%20AND%20%28" <> whereBu
 whereBuilder (Or a b) =  "%28" <> whereBuilder a <> "%29%20OR%20%28" <> whereBuilder b <> "%29"
 whereBuilder op = textBuilder (fieldName op) <> prefix op <> textBuilder (fieldValue op) <> suffix
   where
-    !isNum = either (const False) (const True) . double $ fieldValue op
+    !isNum = either (const False) (\(_, x) -> T.null x) . double $ fieldValue op
     prefix (Gt _ _) | isNum = "%20%3E%20"
                     | otherwise = "%20%3E%20%27"
     prefix (Lt _ _) | isNum = "%20%3C%20"
