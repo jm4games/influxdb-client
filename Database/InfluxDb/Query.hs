@@ -19,7 +19,9 @@ module Database.InfluxDb.Query
   , (.=.)
   , (.!=.)
   , (.>.)
+  , (.>=.)
   , (.<.)
+  , (.<=.)
   , (.=~.)
   , (.!~.)
   -- * Query Language
@@ -102,28 +104,34 @@ data WhereClause = And      !WhereClause !WhereClause
                  | Eq       !Text !Text
                  | Ne       !Text !Text
                  | Gt       !Text !Text
+                 | GtE      !Text !Text
                  | Lt       !Text !Text
+                 | LtE      !Text !Text
                  | Match    !Text !Text
                  | NotMatch !Text !Text
 
 instance Expression WhereClause where
-    fieldName (Gt f _) = f
-    fieldName (Lt f _) = f
-    fieldName (Eq f _) = f
-    fieldName (Ne f _) = f
-    fieldName (Match f _) = f
+    fieldName (Gt f _)       = f
+    fieldName (GtE f _)      = f
+    fieldName (Lt f _)       = f
+    fieldName (LtE f _)      = f
+    fieldName (Eq f _)       = f
+    fieldName (Ne f _)       = f
+    fieldName (Match f _)    = f
     fieldName (NotMatch f _) = f
-    fieldName (And _ _) = error "'And' expression does not support field."
-    fieldName (Or _ _) = error "'Or' expression does not support field."
+    fieldName (And _ _)      = error "'And' expression does not support field."
+    fieldName (Or _ _)       = error "'Or' expression does not support field."
 
-    fieldValue (Gt _ v) = v
-    fieldValue (Lt _ v) = v
-    fieldValue (Eq _ v) = v
-    fieldValue (Ne _ v) = v
-    fieldValue (Match _ v) = v
+    fieldValue (Gt _ v)       = v
+    fieldValue (GtE _ v)      = v
+    fieldValue (Lt _ v)       = v
+    fieldValue (LtE _ v)      = v
+    fieldValue (Eq _ v)       = v
+    fieldValue (Ne _ v)       = v
+    fieldValue (Match _ v)    = v
     fieldValue (NotMatch _ v) = v
-    fieldValue (And _ _) = error "'And' expression does not support value."
-    fieldValue (Or _ _) = error "'Or' expression does not support value."
+    fieldValue (And _ _)      = error "'And' expression does not support value."
+    fieldValue (Or _ _)       = error "'Or' expression does not support value."
 
 (.&&.) :: WhereClause -> WhereClause -> WhereClause
 infixr 3 .&&.
@@ -145,9 +153,17 @@ a .!=. b = Ne a (showTxt b)
 infix 4 .>.
 a .>. b = Gt a (showTxt b)
 
+(.>=.) :: TextShow a => Text -> a -> WhereClause
+infix 4 .>=.
+a .>=. b = GtE a (showTxt b)
+
 (.<.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .<.
 a .<. b = Lt a (showTxt b)
+
+(.<=.) :: TextShow a => Text -> a -> WhereClause
+infix 4 .<=.
+a .<=. b = LtE a (showTxt b)
 
 (.=~.) :: TextShow a => Text -> a -> WhereClause
 infix 4 .=~.
@@ -243,16 +259,20 @@ whereBuilder (Or a b) =  "%28" <> whereBuilder a <> "%29%20OR%20%28" <> whereBui
 whereBuilder op = textBuilder (fieldName op) <> prefix op <> textBuilder (fieldValue op) <> suffix
   where
     !isNum = either (const False) (\(_, x) -> T.null x) . double $ fieldValue op
-    prefix (Gt _ _) | isNum = "%20%3E%20"
-                    | otherwise = "%20%3E%20%27"
-    prefix (Lt _ _) | isNum = "%20%3C%20"
-                    | otherwise = "%20%3C%20%27"
-    prefix (Eq _ _) | isNum = "%20%3D%20"
-                    | otherwise = "%20%3D%20%27"
-    prefix (Ne _ _) | isNum = "%20!%3D%20"
-                    | otherwise = "%20!%3D%20%27"
-    prefix (Match _ _) | isNum = "%20%3D~%20"
-                       | otherwise = "%20%3D~%20%27"
+    prefix (Gt _ _)       | isNum = "%20%3E%20"
+                          | otherwise = "%20%3E%20%27"
+    prefix (GtE _ _)      | isNum = "%20%3E%3D%20"
+                          | otherwise = "%20%3E%3D%20%27"
+    prefix (Lt _ _)       | isNum = "%20%3C%20"
+                          | otherwise = "%20%3C%20%27"
+    prefix (LtE _ _)      | isNum = "%20%3C%3D%20"
+                          | otherwise = "%20%3C%3D%20%27"
+    prefix (Eq _ _)       | isNum = "%20%3D%20"
+                          | otherwise = "%20%3D%20%27"
+    prefix (Ne _ _)       | isNum = "%20!%3D%20"
+                          | otherwise = "%20!%3D%20%27"
+    prefix (Match _ _)    | isNum = "%20%3D~%20"
+                          | otherwise = "%20%3D~%20%27"
     prefix (NotMatch _ _) | isNum = "%20!~%20"
                           | otherwise = "%20!~%20%27"
     prefix _ = error "Unsupported expression."

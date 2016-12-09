@@ -39,6 +39,7 @@ import Data.Conduit (($$+-), Consumer, Producer, await, yield)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.List (foldl')
+import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -191,19 +192,23 @@ query' client db = rawQueryInternal value' client db . toByteString
 
 streamQuery :: (MonadResource m, MonadBaseControl IO m)
             => InfluxDbClient
+            -> Maybe Int
             -> Text
             -> MultiSelect
             -> Producer m QueryResult
-streamQuery _ _ [] = return ()
-streamQuery client db qs = streamQueryInternal 5 qs (rawQueryInternal value' client db)
+streamQuery _ _ _ [] = return ()
+streamQuery client batch db qs =
+  streamQueryInternal (fromMaybe 5 batch) qs (rawQueryInternal value' client db)
 
 streamSeriesResults :: (MonadResource m, MonadBaseControl IO m, FromSeriesResult r)
                     => InfluxDbClient
+                    -> Maybe Int
                     -> Text
                     -> MultiSelect
                     -> Producer m (V.Vector r)
-streamSeriesResults _ _ [] = return ()
-streamSeriesResults client db qs = streamQueryInternal 5 qs (rawPointQueryInternal value' client db)
+streamSeriesResults _ _ _ [] = return ()
+streamSeriesResults client batch db qs =
+  streamQueryInternal (fromMaybe 5 batch) qs (rawPointQueryInternal value' client db)
 
 streamQueryInternal :: forall a m. (MonadResource m, MonadBaseControl IO m)
                     => Int -- ^ Batch size.
