@@ -31,6 +31,9 @@ module Database.InfluxDb.Query
   , from'
   , groupBy
   , where_
+  , limit
+  , orderDescending
+  , orderAscending
   -- ** Target Functions
   , allFields
   , count
@@ -59,10 +62,12 @@ import TextShow (TextShow, showt)
 import qualified Data.Text as T
 
 data SelectStatement = Select
-  { ssTarget  :: !Target
-  , ssFrom    :: !From
-  , ssWhere   :: !(Maybe WhereClause)
-  , ssGroupBy :: !(Maybe GroupBy)
+  { ssTarget     :: !Target
+  , ssFrom       :: !From
+  , ssWhere      :: !(Maybe WhereClause)
+  , ssGroupBy    :: !(Maybe GroupBy)
+  , ssDescending :: !Bool
+  , ssLimit      :: !(Maybe Int)
   }
 
 instance Show SelectStatement where
@@ -72,6 +77,8 @@ instance Query SelectStatement where
   toByteString ss = toStrict . toLazyByteString $ selectBuilder
     <> maybe mempty (mappend "%20WHERE%20" . whereBuilder) (ssWhere ss)
     <> maybe mempty (mappend "%20GROUP%20BY%20" . groupByBuilder) (ssGroupBy ss)
+    <> (if ssDescending ss then "%20ORDER%20BY%20time%20DESC" else mempty)
+    <> maybe mempty (mappend "%20LIMIT%20" . textBuilder . showt) (ssLimit ss)
     where
       selectBuilder = "SELECT%20" <> targetBuilder (ssTarget ss) <>
                       "%20FROM%20" <> fromBuilder (ssFrom ss)
@@ -134,49 +141,49 @@ instance Expression WhereClause where
     fieldValue (Or _ _)       = error "'Or' expression does not support value."
 
 (.&&.) :: WhereClause -> WhereClause -> WhereClause
-infixr 3 .&&.
+infixr 4 .&&.
 a .&&. b = And a b
 
 (.||.) :: WhereClause -> WhereClause -> WhereClause
-infixr 3 .||.
+infixr 4 .||.
 a .||. b = Or a b
 
 (.=.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .=.
+infix 5 .=.
 a .=. b = Eq a (showTxt b)
 
 (.!=.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .!=.
+infix 5 .!=.
 a .!=. b = Ne a (showTxt b)
 
 (.>.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .>.
+infix 5 .>.
 a .>. b = Gt a (showTxt b)
 
 (.>=.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .>=.
+infix 5 .>=.
 a .>=. b = GtE a (showTxt b)
 
 (.<.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .<.
+infix 5 .<.
 a .<. b = Lt a (showTxt b)
 
 (.<=.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .<=.
+infix 5 .<=.
 a .<=. b = LtE a (showTxt b)
 
 (.=~.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .=~.
+infix 5 .=~.
 a .=~. b = Match a (showTxt b)
 
 (.!~.) :: TextShow a => Text -> a -> WhereClause
-infix 4 .!~.
+infix 5 .!~.
 a .!~. b = NotMatch a (showTxt b)
 
 newtype GroupBy = GroupBy Text
 
 groupBy :: SelectStatement -> Text -> SelectStatement
-infix 1 `groupBy`
+infix 2 `groupBy`
 groupBy ss "" = ss { ssGroupBy = Nothing }
 groupBy ss txt = ss { ssGroupBy = Just $ GroupBy txt }
 
@@ -195,6 +202,8 @@ select t f = Select
   , ssFrom = f
   , ssWhere = Nothing
   , ssGroupBy = Nothing
+  , ssDescending = False
+  , ssLimit = Nothing
   }
 
 from :: Text -> From
@@ -230,10 +239,20 @@ fields = Targets . map Field
 targets :: [Target] -> Target
 targets = Targets
 
+orderDescending :: SelectStatement -> SelectStatement
+orderDescending ss = ss { ssDescending = True }
+
+orderAscending :: SelectStatement -> SelectStatement
+orderAscending ss = ss { ssDescending = False }
+
 where_ :: SelectStatement -> WhereClause -> SelectStatement
-infix 2 `where_`
+infix 3 `where_`
 where_ ss@Select { ssWhere = Nothing } w = ss { ssWhere = Just w }
 where_ ss@Select { ssWhere = Just x } w = ss { ssWhere = Just $ And x w }
+
+limit :: SelectStatement -> Int -> SelectStatement
+infix 1 `limit`
+limit ss l = ss { ssLimit = Just l }
 
 textBuilder :: Text -> Builder
 textBuilder = byteString . encodeUtf8
