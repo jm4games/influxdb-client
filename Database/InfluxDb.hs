@@ -25,7 +25,7 @@ import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, putMVar)
 import Control.Exception (Exception, throwIO, SomeException)
 import Control.Exception.Lifted (try)
 import Control.Monad (unless, when, void)
-import Control.Monad.Catch (throwM)
+import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.Morph (lift)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Control (MonadBaseControl)
@@ -35,7 +35,7 @@ import Data.Aeson (Value, parseJSON)
 import Data.Aeson.Parser(value, value')
 import Data.Aeson.Types(Result(..), parse)
 import Data.Attoparsec.ByteString (Parser)
-import Data.Conduit (($$+-), Consumer, Producer, await, yield)
+import Data.Conduit (($$+-), ConduitT, Void, await, yield, sealConduitT)
 import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.List (foldl')
@@ -86,12 +86,12 @@ newClientWithSettings settings url = do
         , icDefaultRequest = req
         }
 
-pointConsumer :: (MonadResource m, ToPoint p)
+pointConsumer :: (MonadThrow m, MonadResource m, ToPoint p)
               => InfluxDbClient -- ^ The client to use for interacting with influxdb.
               -> Text -- ^ The database name.
               -> Int64 -- ^ The max number of bytes to send per request.
               -> Series -- ^ The series to write points for.
-              -> Consumer p m ()
+              -> ConduitT p Void m ()
 pointConsumer client !dbName !size !series = loop mempty 0
     where
       (!prefCnt, !lnPrefix) = seriesToBuilder series
@@ -124,7 +124,7 @@ pointToByteString p =
     fieldToByteString (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
     fieldToByteString (_, Nothing) = ""
 
-sendWriteRequest :: MonadResource m => InfluxDbClient -> Text -> B.Builder -> Int64 -> m ()
+sendWriteRequest :: (MonadThrow m, MonadResource m) => InfluxDbClient -> Text -> B.Builder -> Int64 -> m ()
 sendWriteRequest client dbName body bodySize = do
   res <- N.http req' (icManager client)
   when (N.responseStatus res /= N.status204) $
@@ -138,7 +138,7 @@ sendWriteRequest client dbName body bodySize = do
             , N.queryString = dbQueryString
             }
 
-sendPoints :: (MonadResource m, ToPoint p)
+sendPoints :: (MonadThrow m, MonadResource m, ToPoint p)
            => InfluxDbClient -- ^ The client to use for interacting with influxdb.
            -> Text -- ^ The database name.
            -> Series
@@ -154,7 +154,7 @@ sendPoints client !dbName series points = sendWriteRequest client dbName body bo
         pointBld = pref <> B.insertLazyByteString pointLbs
         !cnt = prefSize + LBS.length pointLbs
 
-sendSeriesPoints :: (MonadResource m, ToSeriesPoint p)
+sendSeriesPoints :: (MonadThrow m, MonadResource m, ToSeriesPoint p)
                  => InfluxDbClient -- ^ The client to use for interacting with influxdb.
                  -> Text -- ^ The database name.
                  -> [p]
@@ -170,51 +170,51 @@ sendSeriesPoints client !dbName points = sendWriteRequest client dbName body bod
         pointBld = pref <> B.insertLazyByteString dataLbs
         !cnt = prefSize + LBS.length dataLbs
 
-rawQuery :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
+rawQuery :: (MonadThrow m, MonadResource m) => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery client db = rawQueryInternal value client db . encodeUtf8
 
-rawQuery' :: MonadResource m => InfluxDbClient -> Text -> Text -> m QueryResult
+rawQuery' :: (MonadThrow m, MonadResource m) => InfluxDbClient -> Text -> Text -> m QueryResult
 rawQuery' client db = rawQueryInternal value' client db . encodeUtf8
 
-query :: (MonadResource m, Query q)
+query :: (MonadThrow m, MonadResource m, Query q)
       => InfluxDbClient
       -> Text
       -> q
       -> m QueryResult
 query client db = rawQueryInternal value client db . toByteString
 
-query' :: (MonadResource m, Query q)
+query' :: (MonadThrow m, MonadResource m, Query q)
        => InfluxDbClient
        -> Text
        -> q
        -> m QueryResult
 query' client db = rawQueryInternal value' client db . toByteString
 
-streamQuery :: (MonadResource m, MonadBaseControl IO m)
+streamQuery :: (MonadThrow m, MonadResource m, MonadBaseControl IO m)
             => InfluxDbClient
             -> Maybe Int
             -> Text
             -> MultiSelect
-            -> Producer m QueryResult
+            -> ConduitT Void QueryResult m ()
 streamQuery _ _ _ [] = return ()
 streamQuery client batch db qs =
   streamQueryInternal (fromMaybe 5 batch) qs (rawQueryInternal value' client db)
 
-streamSeriesResults :: (MonadResource m, MonadBaseControl IO m, FromSeriesResult r)
+streamSeriesResults :: (MonadThrow m, MonadResource m, MonadBaseControl IO m, FromSeriesResult r)
                     => InfluxDbClient
                     -> Maybe Int
                     -> Text
                     -> MultiSelect
-                    -> Producer m (V.Vector r)
+                    -> ConduitT Void (V.Vector r) m ()
 streamSeriesResults _ _ _ [] = return ()
 streamSeriesResults client batch db qs =
   streamQueryInternal (fromMaybe 5 batch) qs (rawPointQueryInternal value' client db)
 
-streamQueryInternal :: forall a m. (MonadResource m, MonadBaseControl IO m)
+streamQueryInternal :: forall a m. (MonadThrow m, MonadResource m, MonadBaseControl IO m)
                     => Int -- ^ Batch size.
                     -> MultiSelect
                     -> (BS.ByteString -> m a)
-                    -> Producer m a
+                    -> ConduitT Void a m ()
 streamQueryInternal batchSize qs runQry = do
   let (nxt, rest) = splitAt batchSize qs
   mvar <- liftIO newEmptyMVar
@@ -235,7 +235,7 @@ streamQueryInternal batchSize qs runQry = do
     fetchData vals dataVar = void . fork $
       try (runQry (toByteString vals)) >>= (liftIO . putMVar dataVar)
 
-rawQueryInternal :: MonadResource m
+rawQueryInternal :: (MonadThrow m, MonadResource m)
                  => Parser Value
                  -> InfluxDbClient
                  -> Text
@@ -243,7 +243,7 @@ rawQueryInternal :: MonadResource m
                  -> m QueryResult
 rawQueryInternal parser client db qry = do
     res <- N.http req (icManager client)
-    x <- N.responseBody res $$+- sinkParser parser
+    x <- sealConduitT (N.responseBody res) $$+- sinkParser parser
     case parse parseJSON x of
         Success a -> return a
         Error err -> throwM $ ParseError err
@@ -255,7 +255,7 @@ rawQueryInternal parser client db qry = do
                 , N.queryString = BS.concat [dbString, "&epoch=ns&q=", qry]
                 }
 
-rawPointQueryInternal :: (MonadResource m, FromSeriesResult r)
+rawPointQueryInternal :: (MonadThrow m, MonadResource m, FromSeriesResult r)
                       => Parser Value
                       -> InfluxDbClient
                       -> Text
