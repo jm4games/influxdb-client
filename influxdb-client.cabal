@@ -22,17 +22,16 @@ library
     Database.InfluxDb.Types
 
   build-depends:
-    aeson                   >= 1.0  && < 1.4,
+    aeson                   >= 1.0  && < 1.5,
     attoparsec              >= 0.13 && < 0.14,
-    base                    >= 4.8  && < 4.12,
+    base                    >= 4.8  && < 4.13,
     blaze-builder           >= 0.4  && < 0.5,
     bytestring              >= 0.10 && < 0.11,
-    bytestring-show         >= 0.3  && < 0.4,
     cereal                  >= 0.5  && < 0.6,
     conduit                 >= 1.2  && < 1.4,
     conduit-extra           >= 1.1  && < 1.4,
-    containers              >= 0.5  && < 0.6,
-    exceptions              >= 0.8  && < 0.9,
+    containers              >= 0.5  && < 0.7,
+    exceptions              >= 0.8  && < 0.11,
     http-conduit            >= 2.1  && < 2.5,
     http-types              >= 0.8  && < 0.13,
     lifted-base             >= 0.2  && < 0.3,

@@ -60,8 +60,6 @@ import qualified Network.HTTP.Conduit as N
 import qualified Network.HTTP.Types.Status as N
 import qualified Network.HTTP.Types.Method as N
 
-import qualified Text.Show.ByteString as TB
-
 data InfluxDbException = IngestionError String String
                        | ParseError String
                        | QueryException Text
@@ -119,7 +117,7 @@ seriesToBuilder series = (fromIntegral $ BS.length pref + 1, B.insertByteString 
 pointToByteString :: Point -> LBS.ByteString
 pointToByteString p =
   (LBS.intercalate "," . map (LBS.fromStrict . fieldToByteString) . V.toList $ pFields p) <>
-  maybe mempty (mappend " " . TB.show) (pTimestamp p) <> "\n"
+  maybe mempty (mappend " " . LBS8.pack . show) (pTimestamp p) <> "\n"
   where
     fieldToByteString (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
     fieldToByteString (_, Nothing) = ""
