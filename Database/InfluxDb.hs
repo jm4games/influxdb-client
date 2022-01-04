@@ -40,7 +40,7 @@ import Data.Conduit.Attoparsec (sinkParser)
 import Data.Int (Int64)
 import Data.List (foldl')
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 import Data.Text.Encoding (encodeUtf8)
 import Data.Typeable (Typeable)
 
@@ -59,7 +59,7 @@ import qualified Network.HTTP.Conduit as N
 import qualified Network.HTTP.Types.Status as N
 import qualified Network.HTTP.Types.Method as N
 
-data InfluxDbException = IngestionError String String
+data InfluxDbException = IngestionError String String LBS.ByteString
                        | ParseError String
                        | QueryException Text
                        deriving (Typeable, Show)
@@ -69,18 +69,25 @@ instance Exception InfluxDbException
 data InfluxDbClient = InfluxDb
     { icManager :: !N.Manager
     , icDefaultRequest :: !N.Request
+    , icOrg       :: BS.ByteString
     }
 
-newClient :: String -> IO InfluxDbClient
+type Url = Text
+type Org = Text
+type AuthToken = Text
+type Bucket = Text
+
+newClient :: Url -> Org -> AuthToken -> IO InfluxDbClient
 newClient = newClientWithSettings N.tlsManagerSettings
 
-newClientWithSettings :: N.ManagerSettings -> String -> IO InfluxDbClient
-newClientWithSettings settings url = do
-    req <- N.parseRequest url
+newClientWithSettings :: N.ManagerSettings -> Url -> Org -> AuthToken -> IO InfluxDbClient
+newClientWithSettings settings url org token = do
+    req <- N.parseRequest (unpack url)
     mng <- N.newManager settings
     return InfluxDb
         { icManager = mng
-        , icDefaultRequest = req
+        , icDefaultRequest = req { N.requestHeaders = ("Authorization", "Token " <> encodeUtf8 token) : N.requestHeaders req }
+        , icOrg = encodeUtf8 org
         }
 
 pointConsumer :: (MonadThrow m, MonadResource m, ToPoint p)
@@ -121,23 +128,25 @@ pointToByteString p =
     fieldToByteString (k, Just v) = BS.concat [encodeUtf8 k, "=", encodeUtf8 v]
     fieldToByteString (_, Nothing) = ""
 
-sendWriteRequest :: (MonadThrow m, MonadResource m) => InfluxDbClient -> Text -> B.Builder -> Int64 -> m ()
+sendWriteRequest :: (MonadThrow m, MonadResource m) => InfluxDbClient -> Bucket -> B.Builder -> Int64 -> m ()
 sendWriteRequest client dbName body bodySize = do
-  res <- N.http req' (icManager client)
-  when (N.responseStatus res /= N.status204) $
-    throwM . IngestionError (LBS8.unpack $ B.toLazyByteString body) . show $ N.responseStatus res
+  res <- N.httpLbs req' (icManager client)
+  when (N.responseStatus res /= N.status204) . throwM $ IngestionError
+    (LBS8.unpack $ B.toLazyByteString body)
+    (show . N.statusMessage $ N.responseStatus res)
+    (N.responseBody res)
   where
-    !dbQueryString = "db=" `BS.append` encodeUtf8 dbName `BS.append` "&precision=n"
+    !dbQueryString = "org=" `BS.append` icOrg client `BS.append` "&bucket=" `BS.append` encodeUtf8 dbName `BS.append` "&precision=ns"
     req' = (icDefaultRequest client)
             { N.method  = N.methodPost
             , N.requestBody = N.RequestBodyBuilder bodySize body
-            , N.path = "/write"
+            , N.path = "/api/v2/write"
             , N.queryString = dbQueryString
             }
 
 sendPoints :: (MonadThrow m, MonadResource m, ToPoint p)
            => InfluxDbClient -- ^ The client to use for interacting with influxdb.
-           -> Text -- ^ The database name.
+           -> Bucket
            -> Series
            -> [p]
            -> m Int64
@@ -235,7 +244,7 @@ streamQueryInternal batchSize qs runQry = do
 rawQueryInternal :: (MonadThrow m, MonadResource m)
                  => Parser Value
                  -> InfluxDbClient
-                 -> Text
+                 -> Bucket
                  -> BS.ByteString
                  -> m QueryResult
 rawQueryInternal parser client db qry = do
@@ -245,10 +254,10 @@ rawQueryInternal parser client db qry = do
         Success a -> return a
         Error err -> throwM $ ParseError err
     where
-      !dbString = "db=" `BS.append` encodeUtf8 db
+      !dbString = "org=" `BS.append` icOrg client `BS.append` "&bucket=" `BS.append` encodeUtf8 db
       req = (icDefaultRequest client)
                 { N.method = N.methodGet
-                , N.path = "/query"
+                , N.path = "/api/v2/query"
                 , N.queryString = BS.concat [dbString, "&epoch=ns&q=", qry]
                 }
 
